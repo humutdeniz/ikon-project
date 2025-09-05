@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin Panel</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Admin Panel</div>
+    <div class="actions">
+      <a class="btn" href="/">Sohbete Dön</a>
+    </div>
+  </header>
+  <main class="container">
+    <section>
+      <h2>Kullanıcılar</h2>
+      <div class="table-wrap"><table id="tblUsers"><thead><tr><th>ID</th><th>Ad</th><th>Durum</th></tr></thead><tbody></tbody></table></div>
+    </section>
+    <section>
+      <h2>Kargolar</h2>
+      <div class="table-wrap"><table id="tblDeliveries"><thead><tr><th>ID</th><th>Alıcı</th><th>Firma</th><th>Durum</th></tr></thead><tbody></tbody></table></div>
+    </section>
+    <section>
+      <h2>Toplantılar</h2>
+      <div class="table-wrap"><table id="tblMeetings"><thead><tr><th>ID</th><th>Ev Sahibi</th><th>Misafir</th><th>Tarih</th></tr></thead><tbody></tbody></table></div>
+    </section>
+  </main>
+
+  <script>
+    // Basic gate if accessed directly
+    if (sessionStorage.getItem('admin_ok') !== 'true') {
+      const pwd = prompt('Admin parolasını girin:');
+      if (pwd !== '2728') {
+        alert('Yanlış parola');
+        window.location.href = '/';
+      } else {
+        sessionStorage.setItem('admin_ok', 'true');
+      }
+    }
+
+    async function fetchJSON(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('İstek başarısız: ' + url);
+      return res.json();
+    }
+
+    function fillTable(tblId, rows, keys) {
+      const tbody = document.querySelector(`#${tblId} tbody`);
+      tbody.innerHTML = '';
+      for (const r of rows) {
+        const tr = document.createElement('tr');
+        for (const k of keys) {
+          const td = document.createElement('td');
+          td.textContent = r[k] ?? '';
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+    }
+
+    async function loadData() {
+      try {
+        const [u, d, m] = await Promise.all([
+          fetchJSON('/api/users'),
+          fetchJSON('/api/deliveries'),
+          fetchJSON('/api/meetings')
+        ]);
+        fillTable('tblUsers', u.data || [], ['id', 'name', 'status']);
+        fillTable('tblDeliveries', d.data || [], ['id', 'recipient', 'company', 'status']);
+        fillTable('tblMeetings', m.data || [], ['id', 'host', 'guest', 'date']);
+      } catch (e) {
+        console.error(e);
+        alert('Veri yüklenemedi.');
+      }
+    }
+
+    loadData();
+  </script>
+</body>
+<!-- End -->
+</html>
+

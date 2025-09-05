@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Concierge - Sohbet</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">AI Concierge</div>
+    <div class="actions">
+      <button id="adminBtn" class="btn">Admin Panel</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="chat" class="chat-window"></div>
+    <form id="chatForm" class="composer" autocomplete="off">
+      <input id="messageInput" class="input" placeholder="Mesajınızı yazın..." />
+      <button id="sendBtn" class="btn primary" type="submit">Gönder</button>
+    </form>
+  </main>
+
+  <script>
+    const chatEl = document.getElementById('chat');
+    const formEl = document.getElementById('chatForm');
+    const inputEl = document.getElementById('messageInput');
+    const adminBtn = document.getElementById('adminBtn');
+
+    // Persist history locally so the backend can keep context
+    function loadHistory() {
+      try { return JSON.parse(localStorage.getItem('chat_history') || '[]'); } catch { return []; }
+    }
+    function saveHistory(h) {
+      localStorage.setItem('chat_history', JSON.stringify(h));
+    }
+
+    function renderMessage(role, content) {
+      const item = document.createElement('div');
+      item.className = `msg ${role}`;
+      item.textContent = content;
+      chatEl.appendChild(item);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    // Initial render
+    const history = loadHistory();
+    for (const turn of history) {
+      if (turn.role === 'user' || turn.role === 'assistant') {
+        renderMessage(turn.role, turn.content);
+      }
+    }
+
+    async function sendMessage(text) {
+      renderMessage('user', text);
+      formEl.classList.add('busy');
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text, history: loadHistory() })
+        });
+        if (!res.ok) throw new Error('Sunucu hatası');
+        const data = await res.json();
+        renderMessage('assistant', data.reply);
+        saveHistory(data.history);
+      } catch (e) {
+        renderMessage('assistant', 'Üzgünüm, bir hata oluştu. Lütfen tekrar deneyin.');
+      } finally {
+        formEl.classList.remove('busy');
+      }
+    }
+
+    formEl.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = inputEl.value.trim();
+      if (!text) return;
+      inputEl.value = '';
+      sendMessage(text);
+    });
+
+    adminBtn.addEventListener('click', () => {
+      const pwd = prompt('Admin parolasını girin:');
+      if (pwd === '2728') {
+        sessionStorage.setItem('admin_ok', 'true');
+        window.location.href = '/admin.html';
+      } else if (pwd !== null) {
+        alert('Yanlış parola');
+      }
+    });
+  </script>
+</body>
+<!-- End -->
+</html>
+
