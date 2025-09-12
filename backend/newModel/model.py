@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Any, Dict, List, Optional
+import openai
 from openai import OpenAI
 
 from utility import (
@@ -10,6 +11,8 @@ from utility import (
     verifyUserFn,
     findDeliveriesFn,
     findMeetingFn,
+    addDeliveryFn,
+    addMeetingFn,
     signalDoorFn,
     alertSecurityFn,
 )
@@ -158,6 +161,39 @@ tools = [
     {
         "type": "function",
         "function": {
+            "name": "addDelivery",
+            "description": "Yeni teslimat ekler. Çalışan adı, şifre, şirket ZORUNLU; ",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "employeeName": {"type": "string"},
+                    "password": {"type": "string"},
+                    "company": {"type": "string"},
+                },
+                "required": ["employeeName", "password", "recipient", "company"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "addMeeting",
+            "description": "Yeni toplantı ekler. Çalışan adı ve şifre ZORUNLU; guest ve time ZORUNLU.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "employeeName": {"type": "string"},
+                    "password": {"type": "string"},
+                    "guest": {"type": "string"},
+                    "time": {"type": "string"},
+                },
+                "required": ["employeeName", "password", "host", "guest", "time"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "signalDoor",
             "description": "Kapı kontrolü (open/deny/lock/unlock). Yalnız doğrulama kararı sonrası çağır: employee doğrulandıysa open, teslimat/toplantı eşleştiyse giriş yönlendir; şüpheli/uygunsuzsa deny veya lock.",
             "parameters": {
@@ -258,6 +294,31 @@ def _tool_find_meeting(args: Dict[str, Any]) -> Any:
     return findMeetingFn()
 
 
+def _tool_add_delivery(args: Dict[str, Any]) -> Any:
+    _update_ctx(
+        {
+            "employeeName": args.get("employeeName"),
+            "password": args.get("password"),
+            "recipient": args.get("recipient"),
+            "company": args.get("company"),
+        }
+    )
+    return addDeliveryFn()
+
+
+def _tool_add_meeting(args: Dict[str, Any]) -> Any:
+    _update_ctx(
+        {
+            "employeeName": args.get("employeeName"),
+            "password": args.get("password"),
+            "host": args.get("host"),
+            "guest": args.get("guest"),
+            "time": args.get("time"),
+        }
+    )
+    return addMeetingFn()
+
+
 def _tool_signal_door(args: Dict[str, Any]) -> Any:
     return signalDoorFn(args.get("action"), args.get("person"))
 
@@ -273,6 +334,8 @@ toolMap = {
     "verifyUser": _tool_verify_user,
     "findDeliveries": _tool_find_deliveries,
     "findMeeting": _tool_find_meeting,
+    "addDelivery": _tool_add_delivery,
+    "addMeeting": _tool_add_meeting,
     "signalDoor": _tool_signal_door,
     "alertSecurity": _tool_alert_security,
 }
@@ -313,69 +376,76 @@ def runAgent(
     safeguard_attempts = 0
 
     # Araç çağrılı çok-adımlı döngü
-    while True:
-        resp = client.chat.completions.create(
-            model=modelId,
-            tools=tools,
-            tool_choice="auto",
-            messages=messages,
-            temperature=0.0,
-        )
+    try:
+        while True:
+            resp = client.chat.completions.create(
+                model=modelId,
+                tools=tools,
+                tool_choice="auto",
+                messages=messages,
+                temperature=0.0,
+            )
 
-        choice = resp.choices[0]
-        msg = choice.message
+            choice = resp.choices[0]
+            msg = choice.message
 
-        assistantPayload: Dict[str, Any] = {"role": "assistant"}
-        if getattr(msg, "content", None):
-            assistantPayload["content"] = msg.content
-            lastText = msg.content or lastText
-        if getattr(msg, "tool_calls", None):
-            assistantPayload["tool_calls"] = msg.tool_calls
-        messages.append(assistantPayload)
+            assistantPayload: Dict[str, Any] = {"role": "assistant"}
+            if getattr(msg, "content", None):
+                assistantPayload["content"] = msg.content
+                lastText = msg.content or lastText
+            if getattr(msg, "tool_calls", None):
+                assistantPayload["tool_calls"] = msg.tool_calls
+            messages.append(assistantPayload)
 
-        # Araç çağrıları geldiyse çalıştır ve cevapları ekle
-        if getattr(msg, "tool_calls", None):
-            used_tool_this_turn = True
-            for tc in msg.tool_calls:
-                name = tc.function.name
-                try:
-                    args = json.loads(tc.function.arguments or "{}")
-                except Exception:
-                    args = {}
-                try:
-                    handler = toolMap.get(name)
-                    if handler is None:
-                        result = {"error": "tool_not_allowed"}
-                    else:
-                        result = handler(args)
-                    content = _as_content(result)
-                except Exception as e:
-                    content = _as_content({"error": "tool_error", "message": str(e)})
+            # Araç çağrıları geldiyse çalıştır ve cevapları ekle
+            if getattr(msg, "tool_calls", None):
+                used_tool_this_turn = True
+                for tc in msg.tool_calls:
+                    name = tc.function.name
+                    try:
+                        args = json.loads(tc.function.arguments or "{}")
+                    except Exception:
+                        args = {}
+                    try:
+                        handler = toolMap.get(name)
+                        if handler is None:
+                            result = {"error": "tool_not_allowed"}
+                        else:
+                            result = handler(args)
+                        content = _as_content(result)
+                    except Exception as e:
+                        content = _as_content({"error": "tool_error", "message": str(e)})
 
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "name": name,
-                        "content": content,
-                    }
-                )
-            continue
-
-        if getattr(msg, "content", None):
-            if not used_tool_this_turn and safeguard_attempts < 2:
-                safeguard_attempts += 1
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": "Araç kullanımı zorunludur. Önce gerekli alanları updateContext ile ayarla, sonra uygun aracı çağır.",
-                    }
-                )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "name": name,
+                            "content": content,
+                        }
+                    )
                 continue
-            return msg.content.strip()
 
-        if choice.finish_reason in ("stop", "length", "content_filter"):
-            return (lastText or "").strip()
+            if getattr(msg, "content", None):
+                if not used_tool_this_turn and safeguard_attempts < 2:
+                    safeguard_attempts += 1
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": "Araç kullanımı zorunludur. Önce gerekli alanları updateContext ile ayarla, sonra uygun aracı çağır.",
+                        }
+                    )
+                    continue
+                return msg.content.strip()
+
+            if choice.finish_reason in ("stop", "length", "content_filter"):
+                return (lastText or "").strip()
+    except (openai.APIConnectionError, Exception) as e:
+        # Fall back gracefully when LLM endpoint is unreachable or errors
+        print("LLM connection error:", repr(e))
+        return (
+            "Üzgünüm, şu anda yardımcı olamıyorum. Lütfen resepsiyonda bekleyiniz; yetkiliye haber veriyorum."
+        )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ Run locally
     - `.venv\\Scripts\\Activate.ps1`
   - Install requirements
     - `pip install -r backend/requirements.txt`
+  - ML extras (for violence detection/train scripts)
+    - `pip install -r backend/requirements-ml.txt`
 - Start the API on port 5000 (from repo root):
   - `uvicorn backend.main:app --reload --port 5000`
 

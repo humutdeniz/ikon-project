@@ -4,8 +4,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 # Import the agent from the sibling package `model`
-from ..model.talk import talkToAgent
-from ..agent.runner import step as agent_step
+from ..newModel.talk import talkToAgent
 
 
 router = APIRouter()
@@ -25,16 +24,11 @@ class ChatResponse(BaseModel):
 
 @router.post("/chat", response_model=ChatResponse)
 def chat_endpoint(req: ChatRequest):
-    # New structured agent path if context provided
-    if req.context is not None:
-        res = agent_step(req.message, req.context)
-        return {
-            "reply": res.reply,
-            "history": res.context.turns,
-            "context": res.context.dict(),
-        }
+    # Simplified flow: ignore context and do not pass backend-side history
+    reply = talkToAgent(req.message)
 
-    # Legacy path using LLM chat history
     history = req.history[:] if req.history else []
-    reply = talkToAgent(req.message, history)
-    return {"reply": reply, "history": history}
+    history.append({"role": "user", "content": req.message})
+    history.append({"role": "assistant", "content": reply})
+
+    return {"reply": reply, "history": history, "context": None}

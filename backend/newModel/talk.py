@@ -1,8 +1,8 @@
-from model import runAgent
+from .model import runAgent
 
 
-def talkToAgent(userText: str) -> str:
-    return runAgent({"text": userText}, decisionOnly=True)
+def talkToAgent(userText: str, history: list | None = None) -> str:
+    return runAgent({"text": userText}, decisionOnly=True, history=history)
 
 
 def chatLoop():

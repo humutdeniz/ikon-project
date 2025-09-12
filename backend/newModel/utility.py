@@ -38,6 +38,7 @@ def getContext() -> Dict[str, str]:
 
 
 def setContext(newContext: Dict[str, str]) -> None:
+    global messageCount
     userContext.update(newContext)
     print("------CONTEXT CHANGE ------")
     pp(userContext)
@@ -54,8 +55,10 @@ def setContext(newContext: Dict[str, str]) -> None:
 
 
 def resetContext() -> None:
+    global messageCount
     print("-----------------------------CONTEXT RESET--------------------------------")
     userContext.update(defaultContext)
+    messageCount = 0
 
 
 def getTodayDate() -> str:
@@ -197,7 +200,7 @@ def findMeetingFn():
             params.append(f"%{userContext['host'].upper()}%")
 
         if userContext["guest"] != UNKNOWN:
-            where.append("guest = ?")
+            where.append("guest LIKE ?")
             params.append(userContext["guest"].upper())
         if userContext["time"] != UNKNOWN:
             where.append("date = ?")
@@ -238,3 +241,82 @@ def alertSecurityFn(reason: str, details: dict | None):
     # No backend call; simulate side-effect locally
     print("alertSecurityFn", reason, details)
     return {"ok": True, "reason": reason}
+
+
+def addDeliveryFn():
+    try:
+        # Require employee credentials
+        if userContext["employeeName"] == UNKNOWN or userContext["password"] == UNKNOWN:
+            return "Lütfen adınızı ve şifrenizi giriniz."
+
+        with _connect() as conn:
+            # Verify employee
+            cur = conn.execute(
+                "SELECT id FROM users WHERE name = ? AND password = ?",
+                (userContext["employeeName"].upper(), userContext["password"]),
+            )
+            user = cur.fetchone()
+            if not user:
+                return "Kullanıcı doğrulanamadı. Lütfen adınızı tam, şifrenizi doğru giriniz."
+
+            # Validate required delivery fields
+            if userContext["company"] == UNKNOWN:
+                return "Lütfen şirket ismini giriniz."
+
+            # Insert delivery
+            conn.execute(
+                "INSERT INTO deliveries (recipient, company, status) VALUES (?, ?, ?)",
+                (
+                    userContext["employeeName"].upper(),
+                    userContext["company"].upper(),
+                    "pending",
+                ),
+            )
+            conn.commit()
+
+            resetContext()
+            return "Teslimat başarıyla kaydedildi."
+    except Exception:
+        callSecurityFn()
+        return "Teknik bir sorun oluştu. Size yardımcı olacak görevliyi çağırıyorum."
+
+
+def addMeetingFn():
+    try:
+        # Require employee credentials
+        if userContext["employeeName"] == UNKNOWN or userContext["password"] == UNKNOWN:
+            return "Lütfen adınızı ve şifrenizi giriniz."
+
+        with _connect() as conn:
+            # Verify employee
+            cur = conn.execute(
+                "SELECT id FROM users WHERE name = ? AND password = ?",
+                (userContext["employeeName"].upper(), userContext["password"]),
+            )
+            user = cur.fetchone()
+            if not user:
+                return "Kullanıcı doğrulanamadı. Lütfen adınızı tam, şifrenizi doğru giriniz."
+
+            # Validate required meeting fields
+            if userContext["guest"] == UNKNOWN or userContext["time"] == UNKNOWN:
+                return "Lütfen misafir ve zamanı giriniz."
+
+            today = datetime.date.today().strftime("%Y-%m-%d")
+            date_str = f"{today}T{userContext['time']}"
+
+            # Insert meeting
+            conn.execute(
+                "INSERT INTO meetings (host, guest, date) VALUES (?, ?, ?)",
+                (
+                    userContext["employeeName"].upper(),
+                    userContext["guest"].upper(),
+                    date_str,
+                ),
+            )
+            conn.commit()
+
+            resetContext()
+            return "Toplantı başarıyla oluşturuldu."
+    except Exception:
+        callSecurityFn()
+        return "Teknik bir sorun oluştu. Size yardımcı olacak görevliyi çağırıyorum."
