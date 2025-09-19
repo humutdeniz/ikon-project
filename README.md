@@ -108,9 +108,3 @@ README.md          This file
 - **Whisper GPU errors**: Set `WHISPER_DEVICE=cpu` or install a CUDA-enabled PyTorch build matching your drivers.
 - **Database locked**: SQLite WAL mode is enabled; if you see locks, ensure only one backend instance writes to the file.
 - **CORS/404 from frontend**: Confirm backend runs on `:5000` and `API_BASE_URL` matches.
-
-## Tests
-- Frontend: `npm test`
-- Backend: add Python tests under `backend/` and run via `pytest` (not included by default).
-
-Happy hacking!
