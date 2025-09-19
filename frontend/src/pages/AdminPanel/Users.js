@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Box, Button, Paper, Stack, TextField, Typography } from "@mui/material";
+import { buildApiUrl } from "../../config";
 import "../../App.css";
 
 export function Users() {
@@ -16,7 +17,7 @@ export function Users() {
     const fetchUsers = async () => {
         try {
             setLoading(true);
-            const response = await fetch("http://localhost:5000/api/users");
+            const response = await fetch(buildApiUrl("/users"));
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
@@ -48,7 +49,7 @@ export function Users() {
         }
 
         try {
-            const response = await fetch("http://localhost:5000/api/users", {
+            const response = await fetch(buildApiUrl("/users"), {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",

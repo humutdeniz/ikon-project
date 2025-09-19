@@ -79,7 +79,7 @@ def main():
     ap.add_argument("--minHits", type=int, default=10, help="min frames in window with p>=thrStart")
     ap.add_argument("--thrStart", type=float, default=0.8, help="start alert if EMA>=thrStart AND hits>=minHits")
     ap.add_argument("--thrStop", type=float, default=0.6, help="stop alert when EMA<thrStop")
-    ap.add_argument("--emaAlpha", type=float, default=0.6, help="EMA smoothing factor (0..1)")
+    ap.add_argument("--emaAlpha", type=float, default=0.4, help="EMA smoothing factor (0..1)")
     ap.add_argument("--motionGate", type=float, default=4.0, help="skip/downweight frames if motion score < gate")
     ap.add_argument("--everyMs", type=int, default=150, help="infer every N ms")
     ap.add_argument("--saveAlertsDir", type=str, default=None)

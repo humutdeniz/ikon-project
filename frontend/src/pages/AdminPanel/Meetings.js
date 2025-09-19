@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Box, Button, Paper, Stack, TextField, Typography } from "@mui/material";
+import { buildApiUrl } from "../../config";
 import "../../App.css";
 
 export function Meetings() {
@@ -17,11 +18,11 @@ export function Meetings() {
         try {
             setLoading(true);
 
-            let url = "http://localhost:5000/api/meetings";
+            let url = buildApiUrl("/meetings");
             const params = [];
-            if (host !== undefined) params.push(`host=${host}`);
-            if (guest !== undefined) params.push(`guest=${guest}`);
-            if (date !== undefined) params.push(`date=${date}`);
+            if (host !== undefined) params.push(`host=${encodeURIComponent(host)}`);
+            if (guest !== undefined) params.push(`guest=${encodeURIComponent(guest)}`);
+            if (date !== undefined) params.push(`date=${encodeURIComponent(date)}`);
             if (params.length) url += "?" + params.join("&");
 
             const response = await fetch(url, { method: "GET" });
@@ -56,7 +57,7 @@ export function Meetings() {
         }
 
         try {
-            const response = await fetch("http://localhost:5000/api/meetings", {
+            const response = await fetch(buildApiUrl("/meetings"), {
                 method: "POST",
                 body: JSON.stringify(newMeeting),
                 headers: {

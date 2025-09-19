@@ -2,13 +2,11 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from passlib.context import CryptContext
 
 from ..db import get_connection
 
 
 router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class UserCreate(BaseModel):

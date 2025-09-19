@@ -1,5 +1,0 @@
-numpy
-opencv-python
-tensorflow
-tf-models-official
-

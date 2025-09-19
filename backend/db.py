@@ -18,11 +18,12 @@ def init_db() -> None:
     try:
         conn.executescript(
             """
-            CREATE TABLE IF NOT EXISTS users (
+            CREATE TABLE IF NOT EXISTS "users" (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
-              name TEXT NOT NULL,
-              status TEXT,
-              password TEXT NOT NULL
+              name	TEXT NOT NULL,
+              status	TEXT,
+              password	TEXT NOT NULL,
+              email	TEXT
             );
             CREATE TABLE IF NOT EXISTS deliveries (
               id INTEGER PRIMARY KEY AUTOINCREMENT,

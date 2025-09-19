@@ -1,62 +1,99 @@
 import json
 import os
+import re
 from typing import Any, Dict, List, Optional
 import openai
 from openai import OpenAI
-
-from utility import (
-    getContext,
-    setContext,
-    resetContext,
-    verifyUserFn,
-    findDeliveriesFn,
-    findMeetingFn,
-    addDeliveryFn,
-    addMeetingFn,
-    signalDoorFn,
-    alertSecurityFn,
-)
-
+from datetime import datetime
 
 try:
-    from dotenv import load_dotenv
+    # When imported as part of the package: backend.newModel.model
+    from .utility import (
+        callSecurityFn,
+        getContext,
+        setContext,
+        resetContext,
+        verifyUserFn,
+        consumeHistoryResetFlag,
+        findDeliveriesFn,
+        findMeetingFn,
+        addDeliveryFn,
+        addMeetingFn,
+        signalDoorFn,
+        alertSecurityFn,
+    )
+except ImportError:
+    # When running this file directly: python backend/newModel/model.py
+    from utility import (
+        callSecurityFn,
+        getContext,
+        setContext,
+        resetContext,
+        verifyUserFn,
+        consumeHistoryResetFlag,
+        findDeliveriesFn,
+        findMeetingFn,
+        addDeliveryFn,
+        addMeetingFn,
+        signalDoorFn,
+        alertSecurityFn,
+    )
 
-    load_dotenv()
-except Exception:
-    pass
 
 
-# Sistem promptu: aracı konteks ile yöneten, araç kullanımı zorunlu, Türkçe konuşan konsiyerj
-agentSystemPrompt = """
-Rolün: Türkçe konuşan bir sekreter/güvenlik konsiyerjisin. Görevlerin:
-- Çalışan girişleri, teslimatlar ve toplantı misafirlerini doğrula.
-- SADECE ARAÇLARDAN, KULLANICI BİLGİSİNDEN VE CONTEXT'TEN YARARLAN. KESİNLİKLE UYDURMA.
-- Şüpheli durumlarda güvenliği uyar; kapı kontrolünü araçlarla yönet.
-- Kısa, nazik, Türkçe; araç mesajı varsa onu tercih et; araç nesne döndürürse doğal cümleye çevir
-- İç araç adlarını/uygulama detaylarını kullanıcıya söyleme
+# Sistem promptu (temel): aracı konteks ile yöneten, araç kullanımı zorunlu, Türkçe konuşan konsiyerj
+agentSystemPromptBase = """
+Rolün: Türkçe konuşan bir sekreter/güvenlik konsiyerjisin.
 
-Bağlam (context) yönetimi:
-- Güncel durum userContext ile tutulur. Erişmek için getContext aracını, uygun alanları doldurmak için updateContext aracını çağır.
+Görevlerin: - Çalışan girişleri, teslimatlar ve toplantı misafirlerini doğrula.
+- SADECE ARAÇLARDAN, KULLANICI BİLGİSİNDEN VE CONTEXT'TEN YARARLAN. KESİNLİKLE UYDURMA. 
+- Şüpheli durumlarda güvenliği uyar; kapı kontrolünü araçlarla yönet. 
+- Kısa, nazik, Türkçe; araç mesajı varsa onu tercih et; araç nesne döndürürse doğal cümleye çevir 
+- İç araç adlarını/uygulama detaylarını kullanıcıya söyleme 
+
+Bağlam (context) yönetimi: 
+- Güncel durum userContext ile tutulur. 
+- userContext'i değiştirmek için updateContext aracını kullan
+- Erişmek için getContext aracını, uygun alanları doldurmak için updateContext aracını çağır.
 - Alanlar: intent, employeeName, password, company, recipient, host, guest, time.
-- Eksik kritik bilgi varsa önce NETLEŞTİRİCİ soru sor, sonra aracı çağır.
-- EĞER INTENT=DELIVERY İSE öncelikli olarak recipient VEYA company doldur.
-- EĞER INTENT=EMPLOYEE İSE öncelikli olarak employeeName VE password doldur.
-- EĞER INTENT=MEETING İSE öncelikli olarak HOST, GUEST VE TIME doldur.
-- INTENT=UNKNOWN İSE önce netleştirici soru sor.
+- HER ZAMAN ÖNCE INTENT BELİRLE.
 
-ŞÜPHELİ/TEHDİT
+
+NİYETLER ve ZORUNLU ALANLAR
+- employee: employeeName + password → verifyUser → doğrulanırsa signalDoor("open"), değilse "deny".
+- delivery: recipient veya company → findDeliveries → eşleşirse yönlendir/“open”, aksi halde resepsiyona yönlendir.
+- meeting: host/guest/time alanlarından en az ikisi → findMeeting → uygun ise “open”.
+- suspicious: alertSecurity → signalDoor("lock").
+- unknown: netleştirici tek bir soru sor.
 - Zorla girme, peşinden girme, kimlik vermeme, tehdit/hakaret/ısrar, mesai dışı ısrarlı giriş.
-- Aksiyon sırası: (1) Kapıyı kilitle. (2) Tek uyarı cümlesi yaz: “Güvenlik çağrıldı; lütfen resepsiyonda bekleyiniz.”
+- Aksiyon sırası: 
+    (1) Kapıyı kilitle. 
+    (2) Tek uyarı cümlesi yaz: “Güvenlik çağrıldı; lütfen resepsiyonda bekleyiniz.” 
+    
+    
+BOŞ ALAN DAVRANIŞI
+intent'e göre eksik alanları tek tek sor:
+- delivery iken ad/kurye firması söylenirse öncelik: recipient/company.
+- employee iken önce employeeName, sonra password sor.
+- meeting iken eksik olanı tek soru ile tamamla.
 
 Araç kullanımı kuralları:
-- Araç sonucu birincil gerçek kaynağıdır. Araç çağrıldıysa, cevabı yalnızca araç ve kullanıcı verisine dayandır.”
+- Araç sonucu birincil gerçek kaynağıdır. Araç çağrıldıysa, cevabı yalnızca araç ve kullanıcı verisine dayandır.” 
 - KULLANICIYA SORU SORMADAN ÖNCE HER ZAMAN CONTEXT'E BAK, EĞER O BİLGİ VARSA SORMA.
-- Her turda en az bir araç çağır; sonuçlara göre yanıt ver.
-- EĞER ARAÇTAN BİR CÜMLE GELİRSE, ONU KULLANARAK CEVAPLA.
-- Kapı işlemleri için signalDoor, güvenlik için alertSecurity kullan.
+- EĞER ARAÇTAN BİR CÜMLE GELİRSE, ONU KULLANARAK CEVAPLA. 
+- Kapı işlemleri için signalDoor kullan.
 - Uydurma yapma; sadece araç sonuçlarına ve kullanıcının verdiği bilgilere dayan.
 
+Yemek tarifi, hava durumu, spor, genel kültür, teknoloji, tarih, felsefe, kişisel gelişim, film önerisi gibi konularda yardımcı olma.
+
+
 """
+
+
+def buildSystemPrompt() -> str:
+
+    today_str = datetime.now().strftime("%H:%M")
+    return agentSystemPromptBase + f"\n\nGüncel tarih: {today_str}\n"
 
 
 # Araç tanımları (LLM'e gösterilen fonksiyon şemaları)
@@ -73,8 +110,7 @@ tools = [
         "type": "function",
         "function": {
             "name": "updateContext",
-            "description": "Konuşmadan çıkarılan alanlarla userContext'i kısmi günceller;"
-            + " HER AKIŞTA ÖNCE çağır. Sadece verilen alanlar yazılır (None/boş gönderme)."
+            "description": "Konuşmadan çıkarılan alanlarla userContext'i günceller KULLANICI BİLGİ VERDİĞİNDE KESİNLİKLE ÇAĞIR. Sadece verilen alanlar yazılır (None/boş gönderme)."
             + " intent=delivery için recipient/company, intent=employee için employeeName/password, intent=meeting için host/guest/time.",
             "parameters": {
                 "type": "object",
@@ -87,6 +123,8 @@ tools = [
                             "delivery",
                             "meeting",
                             "suspicious",
+                            "addMeeting",
+                            "addDelivery",
                         ],
                     },
                     "employeeName": {"type": "string"},
@@ -162,7 +200,7 @@ tools = [
         "type": "function",
         "function": {
             "name": "addDelivery",
-            "description": "Yeni teslimat ekler. Çalışan adı, şifre, şirket ZORUNLU; ",
+            "description": "YALNIZ intent=addDelivery is çağır. Veritabanına yeni teslimat ekler.  Eğer kullanıcı bir teslimat veya kargo geleceğini söylüyorsa çağır. Çalışan adı, şifre, şirket ZORUNLU; alıcı bilgisi çalışan adı kabul edilir.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -170,7 +208,7 @@ tools = [
                     "password": {"type": "string"},
                     "company": {"type": "string"},
                 },
-                "required": ["employeeName", "password", "recipient", "company"],
+                "required": ["employeeName", "password", "company"],
             },
         },
     },
@@ -178,7 +216,7 @@ tools = [
         "type": "function",
         "function": {
             "name": "addMeeting",
-            "description": "Yeni toplantı ekler. Çalışan adı ve şifre ZORUNLU; guest ve time ZORUNLU.",
+            "description": "YALNIZ intent=addMeeting is çağır. Veritabanına yeni toplantı ekler. Eğer kullanıcı birinin onu ziyarete ya da toplantıya geleceğini söylüyorsa çağır. Çalışan adı ve şifre ZORUNLU; guest ve time ZORUNLU. Host bilgisi çalışan adı kabul edilir.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -187,7 +225,7 @@ tools = [
                     "guest": {"type": "string"},
                     "time": {"type": "string"},
                 },
-                "required": ["employeeName", "password", "host", "guest", "time"],
+                "required": ["employeeName", "password", "guest", "time"],
             },
         },
     },
@@ -224,6 +262,14 @@ tools = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "callSecurity",
+            "description": "Kullanıcıya yardımcı olamadığında veya LLM bağlantı hatası varsa çağır. Güvenliği acil olarak uyar; kapı kilitli kalmalı. Bu araç çağrıldıysa kullanıcıya beklemesini söyle.",
+        },
+        "parameters": {"type": "object", "properties": {}}
+    },
 ]
 
 
@@ -231,11 +277,64 @@ client = OpenAI(
     base_url=os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1"),
     api_key=os.getenv("OPENAI_API_KEY", "not-needed"),
 )
-modelId = os.getenv("MODEL_ID", "gpt-oss:latest")
+modelId = os.getenv("MODEL_ID", "gpt-oss:20b")
+#modelId = os.getenv("MODEL_ID", "gpt-oss:20b")
 
 
 def _filtered(d: Dict[str, Any]) -> Dict[str, Any]:
     return {k: v for k, v in (d or {}).items() if v is not None}
+
+
+def _normalize_time(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+
+    text = value.strip()
+    if not text:
+        return text
+
+    normalized = text.lower().replace("’", "'")
+
+    def _format(hour_str: str, minute_str: Optional[str]) -> Optional[str]:
+        try:
+            hour = int(hour_str)
+            minute = int(minute_str) if minute_str is not None else 0
+        except ValueError:
+            return None
+
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
+
+        if hour < 7:
+            hour+=12
+
+        return f"{hour:02d}:{minute:02d}"
+
+    direct_match = re.fullmatch(r"\s*(\d{1,2})\s*[:.]\s*(\d{2})\s*", text)
+    if direct_match:
+        formatted = _format(direct_match.group(1), direct_match.group(2))
+        if formatted:
+            return formatted
+
+    patterns = [
+        r"saat\s*(\d{1,2})\s*[:.]\s*(\d{2})",
+        r"(\d{1,2})\s*[:.]\s*(\d{2})",
+        r"saat\s*(\d{1,2})\b",
+        r"(\d{1,2})\s*(?:'de|'te|'da|'ta|de|te|da|ta)\b",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if not match:
+            continue
+
+        hour_str = match.group(1)
+        minute_str = match.group(2) if match.lastindex and match.lastindex >= 2 else None
+        formatted = _format(hour_str, minute_str)
+        if formatted:
+            return formatted
+
+    return text
 
 
 def _as_content(result: Any) -> str:
@@ -257,7 +356,10 @@ def _get_ctx(args: Dict[str, Any]) -> Dict[str, Any]:
 
 def _update_ctx(args: Dict[str, Any]) -> Dict[str, Any]:
     try:
-        setContext(_filtered(args))
+        payload = dict(args or {})
+        if "time" in payload:
+            payload["time"] = _normalize_time(payload.get("time"))
+        setContext(_filtered(payload))
     except Exception:
         pass
     try:
@@ -299,7 +401,6 @@ def _tool_add_delivery(args: Dict[str, Any]) -> Any:
         {
             "employeeName": args.get("employeeName"),
             "password": args.get("password"),
-            "recipient": args.get("recipient"),
             "company": args.get("company"),
         }
     )
@@ -311,7 +412,6 @@ def _tool_add_meeting(args: Dict[str, Any]) -> Any:
         {
             "employeeName": args.get("employeeName"),
             "password": args.get("password"),
-            "host": args.get("host"),
             "guest": args.get("guest"),
             "time": args.get("time"),
         }
@@ -326,10 +426,12 @@ def _tool_signal_door(args: Dict[str, Any]) -> Any:
 def _tool_alert_security(args: Dict[str, Any]) -> Any:
     return alertSecurityFn(args.get("reason"), args.get("details"))
 
+def _tool_call_security(args: Dict[str, Any]) -> Any:
+    return callSecurityFn()
 
 toolMap = {
     "getContext": _get_ctx,
-    "updateContext": lambda args: _update_ctx(args),
+    "updateContext": _update_ctx,
     "resetContext": lambda args: (resetContext() or getContext()),
     "verifyUser": _tool_verify_user,
     "findDeliveries": _tool_find_deliveries,
@@ -338,69 +440,118 @@ toolMap = {
     "addMeeting": _tool_add_meeting,
     "signalDoor": _tool_signal_door,
     "alertSecurity": _tool_alert_security,
+    "callSecurity": _tool_call_security,
 }
 
 
 def runAgent(
     userInput: Dict[str, Any],
-    decisionOnly: bool = True,
     history: Optional[List[Dict]] = None,
-) -> str:
-    user_text = None
-    try:
-        if isinstance(userInput, dict):
-            user_text = userInput.get("text")
-    except Exception:
-        user_text = None
+) -> Dict[str, Any]:
 
-    messages: List[Dict[str, Any]] = [{"role": "system", "content": agentSystemPrompt}]
+    user_text = ""
+    if isinstance(userInput, dict):
+        user_text = str(userInput.get("text") or "").strip()
+    if not user_text:
+        return {
+            "reply": "Nasıl yardımcı olabilirim? Çalışan girişi, teslimat veya toplantı için mi geldiniz?",
+            "history_was_reset": False,
+            "history_reset_before_call": False,
+            "history_reset_during_call": False,
+        }
 
-    if history:
-        for turn in history:
+    def _normalize_history(h: Optional[List[Dict]], max_pairs: int = 8) -> List[Dict[str, str]]:
+        if not h:
+            return []
+        buf: List[Dict[str, str]] = []
+        for turn in h:
             if not isinstance(turn, dict):
                 continue
             role = turn.get("role")
             content = turn.get("content")
-            if role in ("user", "assistant") and isinstance(content, str) and content:
-                messages.append({"role": role, "content": content})
+            if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+                buf.append({"role": role, "content": content.strip()})
+        return buf[-max_pairs * 2 :]
 
+    reset_history = False
+    try:
+        reset_history = consumeHistoryResetFlag()
+    except Exception:
+        reset_history = False
+
+    history_reset_occurred = reset_history
+    history_reset_during_call = False
+    history_reset_before_call = reset_history
+
+    def _finalize(text: str) -> Dict[str, Any]:
+        nonlocal history_reset_occurred, history_reset_during_call
+        try:
+            if consumeHistoryResetFlag():
+                history_reset_occurred = True
+                history_reset_during_call = True
+        except Exception:
+            pass
+        return {
+            "reply": (text or "").strip(),
+            "history_was_reset": history_reset_occurred,
+            "history_reset_before_call": history_reset_before_call,
+            "history_reset_during_call": history_reset_during_call,
+        }
+
+    recent = [] if reset_history else _normalize_history(history, max_pairs=8)
+
+    try:
+        state_snapshot = toolMap["getContext"]({}) or {}
+    except Exception:
+        state_snapshot = {}
+
+    messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": buildSystemPrompt()}
+    ]
     messages.append(
         {
-            "role": "user",
-            "content": user_text or json.dumps(userInput, ensure_ascii=False),
+            "role": "system",
+            "content": "Durum özeti (sadece bağlam için, nihai gerçeklik araç sonuçlarıdır): "
+                       + json.dumps(state_snapshot, ensure_ascii=False),
         }
     )
+    messages.extend(recent)
+    messages.append({"role": "user", "content": user_text})
 
-    lastText = ""
-    used_tool_this_turn = False
-    safeguard_attempts = 0
+    last_text = ""
+    MAX_STEPS = 10
+    step = 0
 
-    # Araç çağrılı çok-adımlı döngü
     try:
         while True:
+            step += 1
+            if step > MAX_STEPS:
+                return _finalize(
+                    last_text or "Üzgünüm, bir karar veremedim. Lütfen tekrar deneyiniz."
+                )
+
             resp = client.chat.completions.create(
-                model=modelId,
+                model=modelId,             
+                messages=messages,
                 tools=tools,
                 tool_choice="auto",
-                messages=messages,
                 temperature=0.0,
             )
 
             choice = resp.choices[0]
             msg = choice.message
 
-            assistantPayload: Dict[str, Any] = {"role": "assistant"}
+            assistant_payload: Dict[str, Any] = {"role": "assistant"}
             if getattr(msg, "content", None):
-                assistantPayload["content"] = msg.content
-                lastText = msg.content or lastText
+                assistant_payload["content"] = msg.content
+                last_text = msg.content or last_text
             if getattr(msg, "tool_calls", None):
-                assistantPayload["tool_calls"] = msg.tool_calls
-            messages.append(assistantPayload)
+                assistant_payload["tool_calls"] = msg.tool_calls
+            messages.append(assistant_payload)
 
-            # Araç çağrıları geldiyse çalıştır ve cevapları ekle
-            if getattr(msg, "tool_calls", None):
-                used_tool_this_turn = True
-                for tc in msg.tool_calls:
+            tool_calls = getattr(msg, "tool_calls", None)
+            if tool_calls:
+                for tc in tool_calls:
                     name = tc.function.name
                     try:
                         args = json.loads(tc.function.arguments or "{}")
@@ -409,43 +560,39 @@ def runAgent(
                     try:
                         handler = toolMap.get(name)
                         if handler is None:
-                            result = {"error": "tool_not_allowed"}
+                            result = {"error": f"tool_not_allowed:{name}"}
                         else:
                             result = handler(args)
-                        content = _as_content(result)
+                        tool_content = _as_content(result)
                     except Exception as e:
-                        content = _as_content({"error": "tool_error", "message": str(e)})
+                        tool_content = _as_content({"error": "tool_error", "message": str(e)})
 
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": tc.id,
                             "name": name,
-                            "content": content,
+                            "content": tool_content,
                         }
                     )
                 continue
 
             if getattr(msg, "content", None):
-                if not used_tool_this_turn and safeguard_attempts < 2:
-                    safeguard_attempts += 1
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": "Araç kullanımı zorunludur. Önce gerekli alanları updateContext ile ayarla, sonra uygun aracı çağır.",
-                        }
-                    )
-                    continue
-                return msg.content.strip()
+                return _finalize(msg.content or "")
 
             if choice.finish_reason in ("stop", "length", "content_filter"):
-                return (lastText or "").strip()
+                return _finalize(last_text or "")
+
     except (openai.APIConnectionError, Exception) as e:
-        # Fall back gracefully when LLM endpoint is unreachable or errors
         print("LLM connection error:", repr(e))
-        return (
-            "Üzgünüm, şu anda yardımcı olamıyorum. Lütfen resepsiyonda bekleyiniz; yetkiliye haber veriyorum."
+        try:
+            callSecurityFn()
+        except Exception:
+            pass
+        return _finalize(
+            "Üzgünüm, şu anda yardımcı olamıyorum. Lütfen kapıda bekleyiniz; yetkiliye haber veriyorum."
         )
+
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from .db import init_db
-from .routers import users, deliveries, meetings, chat
+from .routers import users, deliveries, meetings, chat, speech, tts
 
 
 def create_app() -> FastAPI:
@@ -24,6 +24,8 @@ def create_app() -> FastAPI:
     app.include_router(deliveries.router, prefix="/api", tags=["deliveries"])
     app.include_router(meetings.router, prefix="/api", tags=["meetings"])
     app.include_router(chat.router, prefix="/api", tags=["chat"])
+    app.include_router(speech.router, prefix="/api", tags=["speech"])
+    app.include_router(tts.router, prefix="/api", tags=["tts"])
 
     # Serve static frontend (chat page as main entry)
     static_dir = Path(__file__).resolve().parents[1] / "frontend"

@@ -7,18 +7,18 @@ export function AdminPanel() {
                 <h1>Welcome to the Admin Panel</h1>
                 <nav style={{ margin: "20px 0" }}>
                     <a
-                        href="/users"
+                        href="/admin/users"
                         style={{ marginRight: "20px", color: "white" }}
                     >
                         Users
                     </a>
                     <a
-                        href="/meetings"
+                        href="/admin/meetings"
                         style={{ marginRight: "20px", color: "white" }}
                     >
                         Meetings
                     </a>
-                    <a href="/deliveries" style={{ color: "white" }}>
+                    <a href="/admin/deliveries" style={{ color: "white" }}>
                         Deliveries
                     </a>
                 </nav>

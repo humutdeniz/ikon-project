@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Box, Button, Paper, Stack, TextField, Typography } from "@mui/material";
+import { buildApiUrl } from "../../config";
 import "../../App.css";
 
 export function Deliveries() {
@@ -15,7 +16,7 @@ export function Deliveries() {
     const fetchDeliveries = async (recipient = "", company = "") => {
         try {
             setLoading(true);
-            let url = "http://localhost:5000/api/deliveries";
+            let url = buildApiUrl("/deliveries");
             const params = [];
             if (recipient)
                 params.push(`recipient=${encodeURIComponent(recipient)}`);
@@ -54,16 +55,13 @@ export function Deliveries() {
         }
 
         try {
-            const response = await fetch(
-                `http://localhost:5000/api/deliveries`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify(newDelivery),
-                }
-            );
+            const response = await fetch(buildApiUrl("/deliveries"), {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(newDelivery),
+            });
 
             if (!response.ok) {
                 throw new Error("Failed to add delivery");
